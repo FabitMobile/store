@@ -10,9 +10,9 @@ ext {
     mockitoKotlinVersion = '2.1.0'
 
     //FABIT
-    libraryExceptionVersion = '1.0.4'
+    libraryExceptionVersion = '1.0.0'
     libraryUtilsVersion = '1.0.0'
-    libraryInteractorVersion = '0.1.1'
+    libraryInteractorVersion = '1.0.0'
 
     storeDependencies = [
             kotlinStdlib: "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version",
