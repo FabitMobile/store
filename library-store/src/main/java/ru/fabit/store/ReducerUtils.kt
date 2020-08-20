@@ -1,4 +1,4 @@
-package ru.fabit.corestore
+package ru.fabit.store
 
 
 fun distinctChangeBoolean(value1: Boolean, value2: Boolean): Boolean {

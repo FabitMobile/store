@@ -1,4 +1,4 @@
-package ru.fabit.corestore
+package ru.fabit.store
 
 import io.reactivex.Single
 
