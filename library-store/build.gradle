@@ -13,10 +13,8 @@ dependencies {
     /* Reactive */
     implementation deps.rxJava
     implementation deps.javaInject
-    implementation deps.jodaTime
     implementation deps.timber
 
-    testImplementation depsTest.jodaTest
     testImplementation depsTest.junit
     testImplementation depsTest.mockitoCore
     testImplementation depsTest.mockitoKotlin
