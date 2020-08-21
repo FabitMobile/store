@@ -10,7 +10,7 @@ ext {
     mockitoKotlinVersion = '2.1.0'
 
     //FABIT
-    libraryExceptionVersion = '1.0.0'
+    libraryExceptionVersion = '1.0.1'
     libraryUtilsVersion = '1.0.0'
     libraryInteractorVersion = '1.0.0'
 
