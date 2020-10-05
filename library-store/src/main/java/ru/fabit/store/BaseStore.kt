@@ -19,7 +19,8 @@ abstract class BaseStore<State, Action>(
     private val bootstrapper: () -> Single<Action>,
     private val sideEffects: Iterable<SideEffect<State, Action>> = CopyOnWriteArrayList(),
     private val actionSources: Iterable<ActionSource<Action>> = CopyOnWriteArrayList(),
-    private val bindActionSources: Iterable<BindActionSource<Action>> = CopyOnWriteArrayList()
+    private val bindActionSources: Iterable<BindActionSource<Action>> = CopyOnWriteArrayList(),
+    private val actionHandlers: Iterable<ActionHandler<Action>> = CopyOnWriteArrayList()
 ) : Store<State, Action> {
 
     private val disposable = CompositeDisposable()
@@ -32,9 +33,10 @@ abstract class BaseStore<State, Action>(
     init {
         disposable.add(reduce())
         disposable.add(sideEffectDispatch())
-        actionSourceDispatch()
         bindActionSourceDispatch()
         disposable.add(bootstrapper().subscribe(Consumer { dispatchAction(it) }))
+        actionSourceDispatch()
+        actionHandlerDispatch()
     }
 
     /**
@@ -118,6 +120,24 @@ abstract class BaseStore<State, Action>(
             }, { it.printStackTrace() })
     }
 
+
+    private fun actionHandlerDispatch() {
+        actionHandlers.map { handler ->
+            sourceDisposable.add(
+                handler.key,
+                actionSubject
+                    .filter { handler.query(it) }
+                    .observeOn(handler.handlerScheduler)
+                    .subscribe({ action ->
+                        handler.invoke(action)
+                    },
+                        { throwable ->
+                            throwable.printStackTrace()
+                        }
+                    )
+            )
+        }
+    }
 
     private fun actionSourceDispatch() {
         actionSources.map { actionSource ->
