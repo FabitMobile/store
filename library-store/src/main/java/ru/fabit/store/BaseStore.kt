@@ -79,7 +79,7 @@ abstract class BaseStore<State, Action>(
             }
 
             override fun onNext(action: Action) {
-                val state = reducer.reduce(stateSubject.value, action)
+                val state = reducer.prereduce(stateSubject.value, action)
                 if (state != stateSubject.value) {
                     stateSubject.onNext(state)
                 }
