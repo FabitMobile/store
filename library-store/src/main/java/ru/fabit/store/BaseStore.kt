@@ -1,9 +1,6 @@
 package ru.fabit.store
 
-import io.reactivex.BackpressureStrategy
-import io.reactivex.Observer
-import io.reactivex.Scheduler
-import io.reactivex.Single
+import io.reactivex.*
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
 import io.reactivex.functions.Consumer
@@ -17,6 +14,7 @@ abstract class BaseStore<State, Action>(
     private var currentState: State,
     private var reducer: Reducer<State, Action>,
     private val bootstrapper: () -> Single<Action>,
+    private val errorHandler: ErrorHandler,
     private val sideEffects: Iterable<SideEffect<State, Action>> = CopyOnWriteArrayList(),
     private val actionSources: Iterable<ActionSource<Action>> = CopyOnWriteArrayList(),
     private val bindActionSources: Iterable<BindActionSource<Action>> = CopyOnWriteArrayList(),
@@ -111,13 +109,16 @@ abstract class BaseStore<State, Action>(
                     .map { sideEffect ->
                         sideEffect(pair.first, pair.second)
                             .map { it }
+                            .doOnError { errorHandler.handleError(it) }
                             .onErrorReturn { throwable ->
                                 sideEffect(throwable)
                             }
                     })
             }.subscribe({ action ->
                 actionSubject.onNext(action)
-            }, { it.printStackTrace() })
+            }, {
+                it.printStackTrace()
+            })
     }
 
 
@@ -143,7 +144,18 @@ abstract class BaseStore<State, Action>(
         actionSources.map { actionSource ->
             sourceDisposable.add(
                 actionSource.key,
-                actionSource().subscribe { action -> actionSubject.onNext(action) }
+                actionSource()
+                    .doOnError { errorHandler.handleError(it) }
+                    .onErrorResumeNext { throwable: Throwable ->
+                        Observable.create { emitter ->
+                            emitter.onNext(
+                                actionSource(
+                                    throwable
+                                )
+                            )
+                        }
+                    }
+                    .subscribe { action -> actionSubject.onNext(action) }
             )
         }
     }
@@ -154,7 +166,19 @@ abstract class BaseStore<State, Action>(
                 actionSource.key,
                 actionSubject
                     .filter { actionSource.query(it) }
-                    .switchMap { actionSource(it) }
+                    .switchMap { action ->
+                        actionSource(action)
+                            .doOnError { errorHandler.handleError(it) }
+                            .onErrorResumeNext { throwable: Throwable ->
+                                Observable.create { emitter ->
+                                    emitter.onNext(
+                                        actionSource(
+                                            throwable
+                                        )
+                                    )
+                                }
+                            }
+                    }
                     .subscribe({ action ->
                         actionSubject.onNext(
                             action
