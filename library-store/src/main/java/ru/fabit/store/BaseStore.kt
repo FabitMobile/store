@@ -1,9 +1,6 @@
 package ru.fabit.store
 
-import io.reactivex.BackpressureStrategy
-import io.reactivex.Observer
-import io.reactivex.Scheduler
-import io.reactivex.Single
+import io.reactivex.*
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
 import io.reactivex.functions.Consumer
@@ -149,7 +146,15 @@ abstract class BaseStore<State, Action>(
                 actionSource.key,
                 actionSource()
                     .doOnError { errorHandler.handleError(it) }
-                    .onErrorReturn { actionSource(it) }
+                    .onErrorResumeNext { throwable: Throwable ->
+                        Observable.create { emitter ->
+                            emitter.onNext(
+                                actionSource(
+                                    throwable
+                                )
+                            )
+                        }
+                    }
                     .subscribe { action -> actionSubject.onNext(action) }
             )
         }
@@ -161,9 +166,19 @@ abstract class BaseStore<State, Action>(
                 actionSource.key,
                 actionSubject
                     .filter { actionSource.query(it) }
-                    .switchMap { actionSource(it) }
-                    .doOnError { errorHandler.handleError(it) }
-                    .onErrorReturn { actionSource(it) }
+                    .switchMap { action ->
+                        actionSource(action)
+                            .doOnError { errorHandler.handleError(it) }
+                            .onErrorResumeNext { throwable: Throwable ->
+                                Observable.create { emitter ->
+                                    emitter.onNext(
+                                        actionSource(
+                                            throwable
+                                        )
+                                    )
+                                }
+                            }
+                    }
                     .subscribe({ action ->
                         actionSubject.onNext(
                             action
