@@ -10,6 +10,7 @@ import io.reactivex.subjects.PublishSubject
 import io.reactivex.subscribers.DisposableSubscriber
 import java.util.concurrent.CopyOnWriteArrayList
 
+abstract class BaseStore<State, Action : Any>(
     currentState: State,
     private var reducer: Reducer<State, Action>,
     bootstrapper: () -> Single<Action>,
