@@ -10,10 +10,10 @@ import io.reactivex.subjects.PublishSubject
 import io.reactivex.subscribers.DisposableSubscriber
 import java.util.concurrent.CopyOnWriteArrayList
 
-abstract class BaseStore<State, Action>(
-    private var currentState: State,
+abstract class BaseStore<State, Action : Any>(
+    currentState: State,
     private var reducer: Reducer<State, Action>,
-    private val bootstrapper: () -> Single<Action>,
+    bootstrapper: () -> Single<Action>,
     private val errorHandler: ErrorHandler,
     private val sideEffects: Iterable<SideEffect<State, Action>> = CopyOnWriteArrayList(),
     private val actionSources: Iterable<ActionSource<Action>> = CopyOnWriteArrayList(),
@@ -48,9 +48,6 @@ abstract class BaseStore<State, Action>(
 
     override fun subscribe(observer: Observer<in State>, observerOnScheduler: Scheduler) {
         stateSubject
-            .distinctUntilChanged { state1: State, state2: State ->
-                state1 == state2
-            }
             .observeOn(observerOnScheduler)
             .subscribe(observer)
     }
@@ -78,9 +75,7 @@ abstract class BaseStore<State, Action>(
 
             override fun onNext(action: Action) {
                 val state = reducer.prereduce(stateSubject.value, action)
-                if (state != stateSubject.value) {
-                    stateSubject.onNext(state)
-                }
+                stateSubject.onNext(state!!)
                 sideEffectSubject.onNext(Pair(state, action))
                 request(countRequestItem)
             }
