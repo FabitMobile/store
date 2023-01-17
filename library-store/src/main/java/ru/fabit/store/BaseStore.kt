@@ -17,8 +17,8 @@ abstract class BaseStore<State, Action : Any>(
     private val errorHandler: ErrorHandler,
     private val sideEffects: Iterable<SideEffect<State, Action>> = CopyOnWriteArrayList(),
     private val actionSources: Iterable<ActionSource<Action>> = CopyOnWriteArrayList(),
-    private val bindActionSources: Iterable<BindActionSource<Action>> = CopyOnWriteArrayList(),
-    private val actionHandlers: Iterable<ActionHandler<Action>> = CopyOnWriteArrayList()
+    private val bindActionSources: Iterable<BindActionSource<State, Action>> = CopyOnWriteArrayList(),
+    private val actionHandlers: Iterable<ActionHandler<State, Action>> = CopyOnWriteArrayList()
 ) : Store<State, Action> {
 
     private val disposable = CompositeDisposable()
@@ -92,12 +92,9 @@ abstract class BaseStore<State, Action : Any>(
         sideEffects.map { sideEffect ->
             sourceDisposable.add(
                 sideEffect.key,
-                actionSubject.map {
-                    Pair(stateSubject.value!!, it)
-                }
-                    .filter {
-                        sideEffect.query(it.first, it.second)
-                    }
+                actionSubject
+                    .map { Pair(stateSubject.value!!, it) }
+                    .filter { sideEffect.query(it.first, it.second) }
                     .switchMapSingle { stateActionPair ->
                         sideEffect(stateActionPair.first, stateActionPair.second)
                             .map { it }
@@ -117,21 +114,30 @@ abstract class BaseStore<State, Action : Any>(
         }
     }
 
-
     private fun actionHandlerDispatch() {
         actionHandlers.map { handler ->
             sourceDisposable.add(
                 handler.key,
                 actionSubject
-                    .filter { handler.query(it) }
+                    .map { Pair(stateSubject.value!!, it) }
+                    .filter { handler.query(it.first, it.second) }
                     .observeOn(handler.handlerScheduler)
-                    .subscribe({ action ->
-                        handler.invoke(action)
-                    },
-                        { throwable ->
-                            throwable.printStackTrace()
+                    .switchMapSingle { stateActionPair ->
+                        Single.create { emitter ->
+                            try {
+                                emitter.onSuccess(
+                                    handler.invoke(
+                                        stateActionPair.first,
+                                        stateActionPair.second
+                                    )
+                                )
+                            } catch (throwable: Throwable) {
+                                errorHandler.handleError(throwable)
+                                emitter.onError(throwable)
+                            }
                         }
-                    )
+                    }
+                    .subscribe({ }, { })
             )
         }
     }
@@ -161,9 +167,10 @@ abstract class BaseStore<State, Action : Any>(
             sourceDisposable.add(
                 actionSource.key,
                 actionSubject
-                    .filter { actionSource.query(it) }
-                    .switchMap { action ->
-                        actionSource(action)
+                    .map { Pair(stateSubject.value!!, it) }
+                    .filter { actionSource.query(it.first, it.second) }
+                    .switchMap { stateActionPair ->
+                        actionSource(stateActionPair.first, stateActionPair.second)
                             .doOnError { errorHandler.handleError(it) }
                             .onErrorResumeNext { throwable: Throwable ->
                                 Observable.create { emitter ->
@@ -180,7 +187,6 @@ abstract class BaseStore<State, Action : Any>(
                             action
                         )
                     }, { e -> e.printStackTrace() })
-
             )
         }
     }
