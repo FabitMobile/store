@@ -7,10 +7,9 @@ open class SideEffect<State, Action>(
     private val effect: (State, Action) -> Single<out Action>,
     private val error: (Throwable) -> Action
 ) {
+    open val key: String = this::class.qualifiedName ?: this::class.java.simpleName
 
-    operator fun invoke(state: State, action: Action) =
-        effect(state, action)
+    operator fun invoke(state: State, action: Action) = effect(state, action)
 
-    operator fun invoke(throwable: Throwable): Action =
-        error(throwable)
+    operator fun invoke(throwable: Throwable): Action = error(throwable)
 }

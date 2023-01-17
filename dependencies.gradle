@@ -1,18 +1,13 @@
 ext {
 
     timberVersion = '4.7.0'
-    rxJavaVersion = '2.1.10'
+    rxJavaVersion = '2.2.20'
     javaInjectVersion = '1'
 
     //Testing
     jUnitVersion = '4.13'
     mockitoCoreVersion = '2.18.3'
     mockitoKotlinVersion = '2.1.0'
-
-    //FABIT
-    libraryExceptionVersion = '1.0.1'
-    libraryUtilsVersion = '1.0.0'
-    libraryInteractorVersion = '1.0.0'
 
     storeDependencies = [
             kotlinStdlib: "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version",
@@ -25,11 +20,5 @@ ext {
             junit        : "junit:junit:$jUnitVersion",
             mockitoCore  : "org.mockito:mockito-core:$mockitoCoreVersion",
             mockitoKotlin: "com.nhaarman.mockitokotlin2:mockito-kotlin:$mockitoKotlinVersion"
-    ]
-
-    libs = [
-            exception : "com.github.FabitMobile:exception:$libraryExceptionVersion",
-            utils     : "com.github.FabitMobile:utils:$libraryUtilsVersion",
-            interactor: "com.github.FabitMobile:interactor:$libraryInteractorVersion"
     ]
 }

@@ -1,13 +1,10 @@
 apply plugin: 'java'
 apply plugin: 'kotlin'
-apply plugin: 'com.github.dcendents.android-maven'
 group = 'com.github.FabitMobile'
 
 dependencies {
     def deps = rootProject.ext.storeDependencies
     def depsTest = rootProject.ext.testDependencies
-    def libs = rootProject.ext.libs
-    implementation fileTree(include: ['*.jar'], dir: 'libs')
 
     /* Reactive */
     implementation deps.rxJava
@@ -18,18 +15,6 @@ dependencies {
     testImplementation depsTest.mockitoCore
     testImplementation depsTest.mockitoKotlin
     implementation deps.kotlinStdlib
-
-    //FABIT
-    implementation libs.exception
-    implementation libs.utils
-    implementation libs.interactor
-}
-
-test {
-    reports {
-        junitXml.enabled = false
-        html.enabled = true
-    }
 }
 
 repositories {

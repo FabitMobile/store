@@ -26,11 +26,10 @@ abstract class BaseStore<State, Action : Any>(
 
     private val actionSubject = PublishSubject.create<Action>()
     private val stateSubject = BehaviorSubject.createDefault(currentState)
-    private val sideEffectSubject = PublishSubject.create<Pair<State, Action>>()
 
     init {
         disposable.add(reduce())
-        disposable.add(sideEffectDispatch())
+        sideEffectDispatch()
         bindActionSourceDispatch()
         disposable.add(bootstrapper().subscribe(Consumer { dispatchAction(it) }))
         actionSourceDispatch()
@@ -74,9 +73,8 @@ abstract class BaseStore<State, Action : Any>(
             }
 
             override fun onNext(action: Action) {
-                val state = reducer.prereduce(stateSubject.value, action)
+                val state = reducer.prereduce(stateSubject.value!!, action)
                 stateSubject.onNext(state!!)
-                sideEffectSubject.onNext(Pair(state, action))
                 request(countRequestItem)
             }
 
@@ -90,30 +88,33 @@ abstract class BaseStore<State, Action : Any>(
         return subscriber
     }
 
-    private fun sideEffectDispatch(): Disposable {
-        return sideEffectSubject
-            .toFlowable(BackpressureStrategy.LATEST)
-            .switchMap { pair ->
-                Single.merge(sideEffects
+    private fun sideEffectDispatch() {
+        sideEffects.map { sideEffect ->
+            sourceDisposable.add(
+                sideEffect.key,
+                actionSubject.map {
+                    Pair(stateSubject.value!!, it)
+                }
                     .filter {
-                        it.query(
-                            pair.first,
-                            pair.second
-                        )
+                        sideEffect.query(it.first, it.second)
                     }
-                    .map { sideEffect ->
-                        sideEffect(pair.first, pair.second)
+                    .switchMapSingle { stateActionPair ->
+                        sideEffect(stateActionPair.first, stateActionPair.second)
                             .map { it }
                             .doOnError { errorHandler.handleError(it) }
-                            .onErrorReturn { throwable ->
-                                sideEffect(throwable)
+                            .onErrorResumeNext { throwable: Throwable ->
+                                Single.create { emitter ->
+                                    emitter.onSuccess(
+                                        sideEffect(throwable)
+                                    )
+                                }
                             }
-                    })
-            }.subscribe({ action ->
-                actionSubject.onNext(action)
-            }, {
-                it.printStackTrace()
-            })
+                    }
+                    .subscribe({ action ->
+                        actionSubject.onNext(action)
+                    }, { it.printStackTrace() })
+            )
+        }
     }
 
 
