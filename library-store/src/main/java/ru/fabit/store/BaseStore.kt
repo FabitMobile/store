@@ -17,8 +17,8 @@ abstract class BaseStore<State, Action : Any>(
     private val errorHandler: ErrorHandler,
     private val sideEffects: Iterable<SideEffect<State, Action>> = CopyOnWriteArrayList(),
     private val actionSources: Iterable<ActionSource<Action>> = CopyOnWriteArrayList(),
-    private val bindActionSources: Iterable<BindActionSource<Action>> = CopyOnWriteArrayList(),
-    private val actionHandlers: Iterable<ActionHandler<Action>> = CopyOnWriteArrayList()
+    private val bindActionSources: Iterable<BindActionSource<State, Action>> = CopyOnWriteArrayList(),
+    private val actionHandlers: Iterable<ActionHandler<State, Action>> = CopyOnWriteArrayList()
 ) : Store<State, Action> {
 
     private val disposable = CompositeDisposable()
@@ -26,11 +26,10 @@ abstract class BaseStore<State, Action : Any>(
 
     private val actionSubject = PublishSubject.create<Action>()
     private val stateSubject = BehaviorSubject.createDefault(currentState)
-    private val sideEffectSubject = PublishSubject.create<Pair<State, Action>>()
 
     init {
         disposable.add(reduce())
-        disposable.add(sideEffectDispatch())
+        sideEffectDispatch()
         bindActionSourceDispatch()
         disposable.add(bootstrapper().subscribe(Consumer { dispatchAction(it) }))
         actionSourceDispatch()
@@ -74,9 +73,8 @@ abstract class BaseStore<State, Action : Any>(
             }
 
             override fun onNext(action: Action) {
-                val state = reducer.prereduce(stateSubject.value, action)
+                val state = reducer.prereduce(stateSubject.value!!, action)
                 stateSubject.onNext(state!!)
-                sideEffectSubject.onNext(Pair(state, action))
                 request(countRequestItem)
             }
 
@@ -90,47 +88,47 @@ abstract class BaseStore<State, Action : Any>(
         return subscriber
     }
 
-    private fun sideEffectDispatch(): Disposable {
-        return sideEffectSubject
-            .toFlowable(BackpressureStrategy.LATEST)
-            .switchMap { pair ->
-                Single.merge(sideEffects
-                    .filter {
-                        it.query(
-                            pair.first,
-                            pair.second
-                        )
-                    }
-                    .map { sideEffect ->
-                        sideEffect(pair.first, pair.second)
+    private fun sideEffectDispatch() {
+        sideEffects.map { sideEffect ->
+            sourceDisposable.add(
+                sideEffect.key,
+                actionSubject
+                    .map { Pair(stateSubject.value!!, it) }
+                    .filter { sideEffect.query(it.first, it.second) }
+                    .switchMapSingle { stateActionPair ->
+                        sideEffect(stateActionPair.first, stateActionPair.second)
                             .map { it }
                             .doOnError { errorHandler.handleError(it) }
-                            .onErrorReturn { throwable ->
-                                sideEffect(throwable)
+                            .onErrorResumeNext { throwable: Throwable ->
+                                Single.create { emitter ->
+                                    emitter.onSuccess(
+                                        sideEffect(throwable)
+                                    )
+                                }
                             }
-                    })
-            }.subscribe({ action ->
-                actionSubject.onNext(action)
-            }, {
-                it.printStackTrace()
-            })
+                    }
+                    .subscribe({ action ->
+                        actionSubject.onNext(action)
+                    }, { it.printStackTrace() })
+            )
+        }
     }
-
 
     private fun actionHandlerDispatch() {
         actionHandlers.map { handler ->
             sourceDisposable.add(
                 handler.key,
                 actionSubject
-                    .filter { handler.query(it) }
+                    .map { Pair(stateSubject.value!!, it) }
+                    .filter { handler.query(it.first, it.second) }
                     .observeOn(handler.handlerScheduler)
-                    .subscribe({ action ->
-                        handler.invoke(action)
-                    },
-                        { throwable ->
-                            throwable.printStackTrace()
+                    .subscribe({ stateActionPair ->
+                        try {
+                            handler.invoke(stateActionPair.first, stateActionPair.second)
+                        } catch (throwable: Throwable) {
+                            errorHandler.handleError(throwable)
                         }
-                    )
+                    }, { })
             )
         }
     }
@@ -160,9 +158,10 @@ abstract class BaseStore<State, Action : Any>(
             sourceDisposable.add(
                 actionSource.key,
                 actionSubject
-                    .filter { actionSource.query(it) }
-                    .switchMap { action ->
-                        actionSource(action)
+                    .map { Pair(stateSubject.value!!, it) }
+                    .filter { actionSource.query(it.first, it.second) }
+                    .switchMap { stateActionPair ->
+                        actionSource(stateActionPair.first, stateActionPair.second)
                             .doOnError { errorHandler.handleError(it) }
                             .onErrorResumeNext { throwable: Throwable ->
                                 Observable.create { emitter ->
@@ -179,7 +178,6 @@ abstract class BaseStore<State, Action : Any>(
                             action
                         )
                     }, { e -> e.printStackTrace() })
-
             )
         }
     }
