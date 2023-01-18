@@ -122,22 +122,13 @@ abstract class BaseStore<State, Action : Any>(
                     .map { Pair(stateSubject.value!!, it) }
                     .filter { handler.query(it.first, it.second) }
                     .observeOn(handler.handlerScheduler)
-                    .switchMapSingle { stateActionPair ->
-                        Single.create { emitter ->
-                            try {
-                                emitter.onSuccess(
-                                    handler.invoke(
-                                        stateActionPair.first,
-                                        stateActionPair.second
-                                    )
-                                )
-                            } catch (throwable: Throwable) {
-                                errorHandler.handleError(throwable)
-                                emitter.onError(throwable)
-                            }
+                    .subscribe({ stateActionPair ->
+                        try {
+                            handler.invoke(stateActionPair.first, stateActionPair.second)
+                        } catch (throwable: Throwable) {
+                            errorHandler.handleError(throwable)
                         }
-                    }
-                    .subscribe({ }, { })
+                    }, { })
             )
         }
     }
