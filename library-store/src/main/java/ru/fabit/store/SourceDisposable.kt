@@ -6,6 +6,8 @@ class SourceDisposable {
     private val map = hashMapOf<String, Disposable>()
 
     fun add(key: String, disposable: Disposable) {
+        if (map.containsKey(key))
+            dispose(key)
         map[key] = disposable
     }
 

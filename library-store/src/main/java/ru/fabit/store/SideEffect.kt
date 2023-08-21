@@ -4,7 +4,7 @@ import io.reactivex.Single
 
 open class SideEffect<State, Action>(
     val query: (State, Action) -> Boolean,
-    private val effect: (State, Action) -> Single<out Action>,
+    private val effect: (State, Action) -> Single<Action>,
     private val error: (Throwable) -> Action
 ) {
     open val key: String = this::class.qualifiedName ?: this::class.java.simpleName

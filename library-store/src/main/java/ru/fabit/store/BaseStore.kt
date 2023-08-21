@@ -1,10 +1,14 @@
 package ru.fabit.store
 
-import io.reactivex.*
+import io.reactivex.BackpressureStrategy
+import io.reactivex.Observable
+import io.reactivex.Observer
+import io.reactivex.Scheduler
+import io.reactivex.Single
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
-import io.reactivex.functions.Consumer
 import io.reactivex.observers.DisposableObserver
+import io.reactivex.schedulers.Schedulers
 import io.reactivex.subjects.BehaviorSubject
 import io.reactivex.subjects.PublishSubject
 import io.reactivex.subscribers.DisposableSubscriber
@@ -13,7 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 abstract class BaseStore<State, Action : Any>(
     currentState: State,
     private var reducer: Reducer<State, Action>,
-    bootstrapper: () -> Single<Action>,
+    bootstrapper: Action?,
     private val errorHandler: ErrorHandler,
     private val sideEffects: Iterable<SideEffect<State, Action>> = CopyOnWriteArrayList(),
     private val actionSources: Iterable<ActionSource<Action>> = CopyOnWriteArrayList(),
@@ -21,19 +25,16 @@ abstract class BaseStore<State, Action : Any>(
     private val actionHandlers: Iterable<ActionHandler<State, Action>> = CopyOnWriteArrayList()
 ) : Store<State, Action> {
 
-    private val disposable = CompositeDisposable()
-    private val sourceDisposable = SourceDisposable()
+    protected val disposable = CompositeDisposable()
+    protected val sourceDisposable = SourceDisposable()
 
-    private val actionSubject = PublishSubject.create<Action>()
-    private val stateSubject = BehaviorSubject.createDefault(currentState)
+    protected val actionSubject = PublishSubject.create<Action>()
+    protected val stateSubject = BehaviorSubject.createDefault(currentState)
 
     init {
-        disposable.add(reduce())
-        sideEffectDispatch()
-        bindActionSourceDispatch()
-        disposable.add(bootstrapper().subscribe(Consumer { dispatchAction(it) }))
+        disposable.add(handleActions())
         actionSourceDispatch()
-        actionHandlerDispatch()
+        bootstrapper?.let { dispatchAction(it) }
     }
 
     /**
@@ -41,7 +42,7 @@ abstract class BaseStore<State, Action : Any>(
      *
      * action - событие
      */
-    override fun dispatchAction(action: Action) {
+    final override fun dispatchAction(action: Action) {
         actionSubject.onNext(action)
     }
 
@@ -60,7 +61,7 @@ abstract class BaseStore<State, Action : Any>(
         sourceDisposable.dispose()
     }
 
-    private fun reduce(): Disposable {
+    private fun handleActions(): Disposable {
         //Passage through the reducer should be one at a time
         val countRequestItem = 1L
 
@@ -73,111 +74,121 @@ abstract class BaseStore<State, Action : Any>(
             }
 
             override fun onNext(action: Action) {
-                val state = reducer.prereduce(stateSubject.value!!, action)
-                stateSubject.onNext(state!!)
+                val state = reducer.reduce(stateSubject.value!!, action)!!
+                stateSubject.onNext(state)
+                sideEffectDispatch(state, action)
+                actionHandlerDispatch(state, action)
+                bindActionSourceDispatch(state, action)
                 request(countRequestItem)
             }
 
             override fun onError(t: Throwable?) {
-                t?.printStackTrace()
+                t?.let {
+                    errorHandler.handleError(t)
+                }
             }
         }
         actionSubject
             .toFlowable(BackpressureStrategy.BUFFER)
+            .observeOn(Schedulers.computation())
             .subscribe(subscriber)
         return subscriber
     }
 
-    private fun sideEffectDispatch() {
-        sideEffects.map { sideEffect ->
+    private fun sideEffectDispatch(state: State, action: Action) {
+        sideEffects.filter { sideEffect ->
+            sideEffect.query(state, action)
+        }.forEach { sideEffect ->
+            val effect = try {
+                sideEffect(state, action)
+            } catch (t: Throwable) {
+                Single.error(t)
+            }
             sourceDisposable.add(
                 sideEffect.key,
-                actionSubject
-                    .map { Pair(stateSubject.value!!, it) }
-                    .filter { sideEffect.query(it.first, it.second) }
-                    .switchMapSingle { stateActionPair ->
-                        sideEffect(stateActionPair.first, stateActionPair.second)
-                            .map { it }
-                            .doOnError { errorHandler.handleError(it) }
-                            .onErrorResumeNext { throwable: Throwable ->
-                                Single.create { emitter ->
-                                    emitter.onSuccess(
-                                        sideEffect(throwable)
-                                    )
-                                }
-                            }
+                effect
+                    .doOnError { errorHandler.handleError(it) }
+                    .onErrorResumeNext { throwable ->
+                        Single.just(sideEffect(throwable))
                     }
                     .subscribe({ action ->
                         actionSubject.onNext(action)
-                    }, { it.printStackTrace() })
+                    }, {
+                        errorHandler.handleError(it)
+                    })
             )
         }
     }
 
-    private fun actionHandlerDispatch() {
-        actionHandlers.map { handler ->
+    private fun actionHandlerDispatch(state: State, action: Action) {
+        actionHandlers.filter { actionHandler ->
+            actionHandler.query(state, action)
+        }.forEach { actionHandler ->
+            val handler = try {
+                Single.create { it.onSuccess(actionHandler(state, action)) }
+            } catch (t: Throwable) {
+                Single.error(t)
+            }
             sourceDisposable.add(
-                handler.key,
-                actionSubject
-                    .map { Pair(stateSubject.value!!, it) }
-                    .filter { handler.query(it.first, it.second) }
-                    .observeOn(handler.handlerScheduler)
-                    .subscribe({ stateActionPair ->
-                        try {
-                            handler.invoke(stateActionPair.first, stateActionPair.second)
-                        } catch (throwable: Throwable) {
-                            errorHandler.handleError(throwable)
-                        }
-                    }, { })
+                actionHandler.key,
+                handler
+                    .doOnError { errorHandler.handleError(it) }
+                    .subscribeOn(actionHandler.handlerScheduler)
+                    .subscribe({ }, {
+                        errorHandler.handleError(it)
+                    })
             )
         }
     }
 
     private fun actionSourceDispatch() {
-        actionSources.map { actionSource ->
+        actionSources.forEach { actionSource ->
+            val source = try {
+                actionSource()
+            } catch (t: Throwable) {
+                Observable.error(t)
+            }
             sourceDisposable.add(
                 actionSource.key,
-                actionSource()
+                source
                     .doOnError { errorHandler.handleError(it) }
                     .onErrorResumeNext { throwable: Throwable ->
                         Observable.create { emitter ->
-                            emitter.onNext(
-                                actionSource(
-                                    throwable
-                                )
-                            )
+                            emitter.onNext(actionSource(throwable))
                         }
                     }
-                    .subscribe { action -> actionSubject.onNext(action) }
+                    .subscribe({ action ->
+                        actionSubject.onNext(action)
+                    }, {
+                        errorHandler.handleError(it)
+                    })
             )
         }
     }
 
-    private fun bindActionSourceDispatch() {
-        bindActionSources.map { actionSource ->
+    private fun bindActionSourceDispatch(state: State, action: Action) {
+        bindActionSources.filter { actionSource ->
+            actionSource.query(state, action)
+        }.forEach { actionSource ->
+            val source = try {
+                actionSource(state, action)
+            } catch (t: Throwable) {
+                Observable.error(t)
+            }
             sourceDisposable.add(
                 actionSource.key,
-                actionSubject
-                    .map { Pair(stateSubject.value!!, it) }
-                    .filter { actionSource.query(it.first, it.second) }
-                    .switchMap { stateActionPair ->
-                        actionSource(stateActionPair.first, stateActionPair.second)
-                            .doOnError { errorHandler.handleError(it) }
-                            .onErrorResumeNext { throwable: Throwable ->
-                                Observable.create { emitter ->
-                                    emitter.onNext(
-                                        actionSource(
-                                            throwable
-                                        )
-                                    )
-                                }
-                            }
+                source
+                    .doOnError { errorHandler.handleError(it) }
+                    .onErrorResumeNext { throwable: Throwable ->
+                        Observable.create { emitter ->
+                            emitter.onNext(actionSource(throwable))
+                        }
                     }
                     .subscribe({ action ->
-                        actionSubject.onNext(
-                            action
-                        )
-                    }, { e -> e.printStackTrace() })
+                        actionSubject.onNext(action)
+                    }, {
+                        errorHandler.handleError(it)
+                    })
             )
         }
     }
