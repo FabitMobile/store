@@ -46,8 +46,13 @@ abstract class BaseStore<State, Action : Any>(
         actionSubject.onNext(action)
     }
 
-    override fun subscribe(observer: Observer<in State>, observerOnScheduler: Scheduler) {
+    override fun subscribe(
+        observer: Observer<in State>,
+        observerOnScheduler: Scheduler,
+        subscribeOnScheduler: Scheduler
+    ) {
         stateSubject
+            .subscribeOn(subscribeOnScheduler)
             .observeOn(observerOnScheduler)
             .subscribe(observer)
     }
